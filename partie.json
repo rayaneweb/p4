@@ -1,0 +1,21 @@
+{
+  "rows": 8,
+  "cols": 9,
+  "starting_color": "R",
+  "mode": 2,
+  "game_index": 1,
+  "moves": [
+    3,
+    4,
+    5,
+    7,
+    7,
+    7,
+    7,
+    7,
+    7
+  ],
+  "view_index": 9,
+  "ai_mode": "random",
+  "ai_depth": 4
+}

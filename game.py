@@ -1,9 +1,13 @@
 # game.py
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import json
 import os
 import random
+import psycopg2
+from psycopg2 import Error
+import datetime
+
 
 class Connect4App(tk.Tk):
     # =======================
@@ -16,6 +20,13 @@ class Connect4App(tk.Tk):
 
     CONFIG_PATH = "config.json"
 
+    # Paramètres de connexion PostgreSQL
+    DB_HOST = "localhost"
+    DB_PORT = 5432
+    DB_NAME = "puissance4_db"
+    DB_USER = "postgres"
+    DB_PASSWORD = "rayane"  # CHANGEZ CE MOT DE PASSE
+
     COLOR_BG = "#00478e"
     COLOR_HOLE = "#e3f2fd"
     COLOR_RED = "#d32f2f"
@@ -24,7 +35,7 @@ class Connect4App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("Puissance 4+ — Random / Minimax (1 fichier)")
+        self.title("Puissance 4+ — Random / Minimax avec Base de Données")
         self.minsize(1050, 700)
 
         # -------- Config / state --------
@@ -32,6 +43,11 @@ class Connect4App(tk.Tk):
         self.rows = cfg["rows"]
         self.cols = cfg["cols"]
         self.starting_color = cfg["starting_color"]
+
+        # Initialisation de la connexion DB
+        self.db_connection = None
+        self.db_cursor = None
+        self.init_database()
 
         self.board = None
         self.current = self.starting_color
@@ -48,8 +64,8 @@ class Connect4App(tk.Tk):
         self.pending_after = None
 
         # UI vars
-        self.mode_var = tk.StringVar(value="2")          # 0/1/2
-        self.ai_var = tk.StringVar(value="random")       # random/minimax
+        self.mode_var = tk.StringVar(value="2")  # 0/1/2
+        self.ai_var = tk.StringVar(value="random")  # random/minimax
         self.depth_var = tk.StringVar(value="4")
         self.status_var = tk.StringVar(value="")
         self.nav_var = tk.IntVar(value=0)
@@ -77,6 +93,54 @@ class Connect4App(tk.Tk):
 
     def copy_grid(self, g):
         return [row[:] for row in g]
+
+    # =======================
+    #        DATABASE
+    # =======================
+    def init_database(self):
+        """Initialise la connexion à la base de données et crée les tables si nécessaire"""
+        try:
+            self.db_connection = psycopg2.connect(
+                host=self.DB_HOST,
+                port=self.DB_PORT,
+                database=self.DB_NAME,
+                user=self.DB_USER,
+                password=self.DB_PASSWORD,
+            )
+            self.db_cursor = self.db_connection.cursor()
+
+            # Créer la table si elle n'existe pas
+            create_table_query = """
+            CREATE TABLE IF NOT EXISTS saved_games (
+                id SERIAL PRIMARY KEY,
+                save_name VARCHAR(100) NOT NULL,
+                save_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                rows INTEGER NOT NULL,
+                cols INTEGER NOT NULL,
+                starting_color CHAR(1) NOT NULL,
+                mode INTEGER NOT NULL,
+                game_index INTEGER NOT NULL,
+                moves JSONB NOT NULL,
+                view_index INTEGER NOT NULL,
+                ai_mode VARCHAR(20) NOT NULL,
+                ai_depth INTEGER NOT NULL
+            );
+            """
+            self.db_cursor.execute(create_table_query)
+            self.db_connection.commit()
+
+            print("✅ Connexion à la base de données établie")
+
+        except Error as e:
+            print(f"❌ Erreur de connexion à la base de données: {e}")
+            # Fallback: continuer sans DB mais avec avertissement
+            messagebox.showwarning(
+                "Base de données",
+                f"Impossible de se connecter à la base de données:\n{e}\n\n"
+                "L'application fonctionnera en mode local uniquement.",
+            )
+            self.db_connection = None
+            self.db_cursor = None
 
     # =======================
     #          CONFIG
@@ -145,7 +209,7 @@ class Connect4App(tk.Tk):
 
     # --- winning line for highlight ---
     def check_win_cells(self, board, last_row, last_col, token):
-        dirs = [(0,1), (1,0), (1,1), (1,-1)]
+        dirs = [(0, 1), (1, 0), (1, 1), (1, -1)]
         for dr, dc in dirs:
             cells = [(last_row, last_col)]
 
@@ -162,7 +226,7 @@ class Connect4App(tk.Tk):
                 c -= dc
 
             if len(cells) >= self.CONNECT_N:
-                return cells[:self.CONNECT_N]
+                return cells[: self.CONNECT_N]
         return []
 
     # =======================
@@ -176,13 +240,21 @@ class Connect4App(tk.Tk):
                 if p == self.EMPTY:
                     continue
 
-                if c + 3 < self.cols and all(grid[r][c+i] == p for i in range(4)):
+                if c + 3 < self.cols and all(grid[r][c + i] == p for i in range(4)):
                     return True, p
-                if r + 3 < self.rows and all(grid[r+i][c] == p for i in range(4)):
+                if r + 3 < self.rows and all(grid[r + i][c] == p for i in range(4)):
                     return True, p
-                if r + 3 < self.rows and c + 3 < self.cols and all(grid[r+i][c+i] == p for i in range(4)):
+                if (
+                    r + 3 < self.rows
+                    and c + 3 < self.cols
+                    and all(grid[r + i][c + i] == p for i in range(4))
+                ):
                     return True, p
-                if r + 3 < self.rows and c + 3 < self.cols and all(grid[r+3-i][c+i] == p for i in range(4)):
+                if (
+                    r + 3 < self.rows
+                    and c + 3 < self.cols
+                    and all(grid[r + 3 - i][c + i] == p for i in range(4))
+                ):
                     return True, p
 
         if self.is_draw(grid):
@@ -222,22 +294,30 @@ class Connect4App(tk.Tk):
         # horiz
         for r in range(self.rows):
             for c in range(self.cols - 3):
-                score += self.evaluate_window([grid[r][c+i] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r][c + i] for i in range(4)], player
+                )
 
         # vert
         for c in range(self.cols):
             for r in range(self.rows - 3):
-                score += self.evaluate_window([grid[r+i][c] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r + i][c] for i in range(4)], player
+                )
 
         # diag \
         for r in range(self.rows - 3):
             for c in range(self.cols - 3):
-                score += self.evaluate_window([grid[r+i][c+i] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r + i][c + i] for i in range(4)], player
+                )
 
         # diag /
         for r in range(self.rows - 3):
             for c in range(self.cols - 3):
-                score += self.evaluate_window([grid[r+3-i][c+i] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r + 3 - i][c + i] for i in range(4)], player
+                )
 
         return score
 
@@ -265,11 +345,11 @@ class Connect4App(tk.Tk):
         moves.sort(key=lambda c: abs(c - center))
 
         if maximizing:
-            best = -10**18
+            best = -(10**18)
             for col in moves:
                 g2 = self.copy_grid(grid)
                 self.drop_in_grid(g2, col, player)
-                val = self.minimax(g2, depth-1, alpha, beta, False, player)
+                val = self.minimax(g2, depth - 1, alpha, beta, False, player)
                 best = max(best, val)
                 alpha = max(alpha, best)
                 if alpha >= beta:
@@ -281,7 +361,7 @@ class Connect4App(tk.Tk):
             for col in moves:
                 g2 = self.copy_grid(grid)
                 self.drop_in_grid(g2, col, opp)
-                val = self.minimax(g2, depth-1, alpha, beta, True, player)
+                val = self.minimax(g2, depth - 1, alpha, beta, True, player)
                 best = min(best, val)
                 beta = min(beta, best)
                 if alpha >= beta:
@@ -296,30 +376,77 @@ class Connect4App(tk.Tk):
         top.pack(side=tk.TOP, fill=tk.X)
 
         ttk.Label(top, text="Mode joueurs:").pack(side=tk.LEFT)
-        mode_combo = ttk.Combobox(top, textvariable=self.mode_var, values=["0", "1", "2"],
-                                  width=4, state="readonly")
+        mode_combo = ttk.Combobox(
+            top,
+            textvariable=self.mode_var,
+            values=["0", "1", "2"],
+            width=4,
+            state="readonly",
+        )
         mode_combo.pack(side=tk.LEFT, padx=(6, 14))
-        mode_combo.bind("<<ComboboxSelected>>", lambda e: self.reset_game(new_game=True))
+        mode_combo.bind(
+            "<<ComboboxSelected>>", lambda e: self.reset_game(new_game=True)
+        )
 
         ttk.Label(top, text="IA:").pack(side=tk.LEFT)
-        ai_combo = ttk.Combobox(top, textvariable=self.ai_var, values=["random", "minimax"],
-                                width=10, state="readonly")
+        ai_combo = ttk.Combobox(
+            top,
+            textvariable=self.ai_var,
+            values=["random", "minimax"],
+            width=10,
+            state="readonly",
+        )
         ai_combo.pack(side=tk.LEFT, padx=(6, 10))
-        ai_combo.bind("<<ComboboxSelected>>", lambda e: self._after_state_change(trigger_robot=True))
+        ai_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self._after_state_change(trigger_robot=True),
+        )
 
         ttk.Label(top, text="Profondeur:").pack(side=tk.LEFT)
-        depth_spin = ttk.Spinbox(top, from_=1, to=8, width=5, textvariable=self.depth_var,
-                                 command=self.render_ai_scores)
+        depth_spin = ttk.Spinbox(
+            top,
+            from_=1,
+            to=8,
+            width=5,
+            textvariable=self.depth_var,
+            command=self.render_ai_scores,
+        )
         depth_spin.pack(side=tk.LEFT, padx=(6, 14))
 
-        ttk.Button(top, text="Nouvelle partie", command=lambda: self.reset_game(new_game=True)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            top, text="Nouvelle partie", command=lambda: self.reset_game(new_game=True)
+        ).pack(side=tk.LEFT, padx=6)
         ttk.Button(top, text="Stop", command=self.stop_game).pack(side=tk.LEFT, padx=6)
-        ttk.Button(top, text="💾 Sauver", command=self.save_game).pack(side=tk.LEFT, padx=6)
-        ttk.Button(top, text="📂 Charger", command=self.load_game).pack(side=tk.LEFT, padx=6)
+
+        # Ajout d'un menu déroulant pour sauvegarder
+        save_menu = tk.Menubutton(top, text="💾 Sauver", relief="raised")
+        save_menu.pack(side=tk.LEFT, padx=6)
+        save_menu.menu = tk.Menu(save_menu, tearoff=0)
+        save_menu["menu"] = save_menu.menu
+        save_menu.menu.add_command(
+            label="Dans la base de données", command=lambda: self.save_game(db=True)
+        )
+        save_menu.menu.add_command(
+            label="Dans un fichier", command=lambda: self.save_game(db=False)
+        )
+
+        # Ajout d'un menu déroulant pour charger
+        load_menu = tk.Menubutton(top, text="📂 Charger", relief="raised")
+        load_menu.pack(side=tk.LEFT, padx=6)
+        load_menu.menu = tk.Menu(load_menu, tearoff=0)
+        load_menu["menu"] = load_menu.menu
+        load_menu.menu.add_command(
+            label="Depuis la base de données", command=lambda: self.load_game(db=True)
+        )
+        load_menu.menu.add_command(
+            label="Depuis un fichier", command=lambda: self.load_game(db=False)
+        )
 
         status_bar = ttk.Frame(self, padding=(10, 0))
         status_bar.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 12)).pack(anchor="w", pady=8)
+        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 12)).pack(
+            anchor="w", pady=8
+        )
 
         body = ttk.Frame(self, padding=10)
         body.pack(fill=tk.BOTH, expand=True)
@@ -339,9 +466,14 @@ class Connect4App(tk.Tk):
 
         ttk.Label(right, text="Navigation\ncoups", justify="center").pack(pady=(0, 8))
         self.nav_scale = tk.Scale(
-            right, from_=0, to=0, orient="vertical",
-            showvalue=False, variable=self.nav_var, length=520,
-            command=lambda v: self.on_nav_change(int(float(v)))
+            right,
+            from_=0,
+            to=0,
+            orient="vertical",
+            showvalue=False,
+            variable=self.nav_var,
+            length=520,
+            command=lambda v: self.on_nav_change(int(float(v))),
         )
         self.nav_scale.pack(fill="y", expand=True)
 
@@ -361,7 +493,12 @@ class Connect4App(tk.Tk):
         row_scores.pack()
 
         for c in range(self.cols):
-            b = ttk.Button(row_btn, text=str(c+1), width=4, command=lambda cc=c: self.on_click(cc))
+            b = ttk.Button(
+                row_btn,
+                text=str(c + 1),
+                width=4,
+                command=lambda cc=c: self.on_click(cc),
+            )
             b.pack(side=tk.LEFT, padx=3, pady=2)
             self.col_buttons.append(b)
 
@@ -394,8 +531,9 @@ class Connect4App(tk.Tk):
         x0 = (W - board_w) / 2
         y0 = (H - board_h) / 2
 
-        self.canvas.create_rectangle(x0, y0, x0 + board_w, y0 + board_h,
-                                     fill=self.COLOR_BG, outline="")
+        self.canvas.create_rectangle(
+            x0, y0, x0 + board_w, y0 + board_h, fill=self.COLOR_BG, outline=""
+        )
 
         win_set = set(self.winning_cells)
 
@@ -403,13 +541,15 @@ class Connect4App(tk.Tk):
             for c in range(self.cols):
                 cx0 = x0 + c * cell + pad
                 cy0 = y0 + r * cell + pad
-                cx1 = x0 + (c+1) * cell - pad
-                cy1 = y0 + (r+1) * cell - pad
+                cx1 = x0 + (c + 1) * cell - pad
+                cy1 = y0 + (r + 1) * cell - pad
 
                 fill = self.cell_color(self.board[r][c])
                 outline = self.COLOR_WIN if (r, c) in win_set else ""
                 width = 4 if (r, c) in win_set else 1
-                self.canvas.create_oval(cx0, cy0, cx1, cy1, fill=fill, outline=outline, width=width)
+                self.canvas.create_oval(
+                    cx0, cy0, cx1, cy1, fill=fill, outline=outline, width=width
+                )
 
     # =======================
     #     STATUS / NAV
@@ -494,7 +634,7 @@ class Connect4App(tk.Tk):
             return True
 
         if self.view_index < len(self.moves):
-            del self.moves[self.view_index:]
+            del self.moves[self.view_index :]
 
         self.moves.append(col)
         self.view_index = len(self.moves)
@@ -531,7 +671,11 @@ class Connect4App(tk.Tk):
         if not cont:
             return
 
-        if mode in (0, 1) and not self.is_human_turn(mode, self.current) and not self.game_over:
+        if (
+            mode in (0, 1)
+            and not self.is_human_turn(mode, self.current)
+            and not self.game_over
+        ):
             self.after(120, self.robot_step)
 
     # =======================
@@ -582,10 +726,10 @@ class Connect4App(tk.Tk):
             else:
                 g2 = self.copy_grid(grid0)
                 self.drop_in_grid(g2, col, player)
-                val = self.minimax(g2, depth-1, -10**18, 10**18, False, player)
+                val = self.minimax(g2, depth - 1, -(10**18), 10**18, False, player)
                 self.score_labels[col].set(str(int(val)))
 
-            self.pending_after = self.after(40, lambda: step(i+1))  # ~25 fps
+            self.pending_after = self.after(40, lambda: step(i + 1))  # ~25 fps
 
         step(0)
 
@@ -655,7 +799,7 @@ class Connect4App(tk.Tk):
         col_list = list(range(self.cols))
         col_list.sort(key=lambda c: abs(c - center))
 
-        state = {"best_col": None, "best_val": -10**18}
+        state = {"best_col": None, "best_val": -(10**18)}
 
         def step(i=0):
             if self.game_over:
@@ -686,19 +830,19 @@ class Connect4App(tk.Tk):
             col = col_list[i]
             if col not in valids:
                 self.score_labels[col].set("N/A")
-                self.pending_after = self.after(30, lambda: step(i+1))
+                self.pending_after = self.after(30, lambda: step(i + 1))
                 return
 
             g2 = self.copy_grid(grid0)
             self.drop_in_grid(g2, col, player)
-            val = self.minimax(g2, depth-1, -10**18, 10**18, False, player)
+            val = self.minimax(g2, depth - 1, -(10**18), 10**18, False, player)
             self.score_labels[col].set(str(int(val)))
 
             if val > state["best_val"]:
                 state["best_val"] = val
                 state["best_col"] = col
 
-            self.pending_after = self.after(40, lambda: step(i+1))  # ~25 fps
+            self.pending_after = self.after(40, lambda: step(i + 1))  # ~25 fps
 
         step(0)
 
@@ -716,7 +860,9 @@ class Connect4App(tk.Tk):
             return
 
         mode = int(self.mode_var.get())
-        self.set_buttons_state((not self.robot_thinking) and self.is_human_turn(mode, self.current))
+        self.set_buttons_state(
+            (not self.robot_thinking) and self.is_human_turn(mode, self.current)
+        )
 
         if trigger_robot and (not self.robot_thinking) and (not self.game_over):
             if not self.is_human_turn(mode, self.current):
@@ -777,7 +923,14 @@ class Connect4App(tk.Tk):
     # =======================
     #       SAVE / LOAD
     # =======================
-    def save_game(self):
+    def save_game(self, db=True):
+        # Demander un nom pour la sauvegarde
+        save_name = simpledialog.askstring(
+            "Sauvegarder la partie", "Nom de la sauvegarde:", parent=self
+        )
+        if not save_name:
+            return
+
         data = {
             "rows": self.rows,
             "cols": self.cols,
@@ -790,10 +943,53 @@ class Connect4App(tk.Tk):
             "ai_depth": self.clamp_int(self.depth_var.get(), 1, 8, 4),
         }
 
+        # Option 1: Sauvegarder dans la base de données
+        if db and self.db_connection:
+            try:
+                insert_query = """
+                INSERT INTO saved_games 
+                (save_name, rows, cols, starting_color, mode, game_index, moves, view_index, ai_mode, ai_depth)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """
+
+                self.db_cursor.execute(
+                    insert_query,
+                    (
+                        save_name,
+                        data["rows"],
+                        data["cols"],
+                        data["starting_color"],
+                        data["mode"],
+                        data["game_index"],
+                        json.dumps(data["moves"]),
+                        data["view_index"],
+                        data["ai_mode"],
+                        data["ai_depth"],
+                    ),
+                )
+                self.db_connection.commit()
+
+                messagebox.showinfo(
+                    "Sauvegarde",
+                    f"✅ Partie '{save_name}' sauvegardée dans la base de données !",
+                )
+                return
+
+            except Error as e:
+                messagebox.showerror("Erreur DB", f"Erreur lors de la sauvegarde: {e}")
+                # Fallback sur fichier
+                if messagebox.askyesno(
+                    "Erreur", "Voulez-vous sauvegarder dans un fichier à la place?"
+                ):
+                    self.save_game(db=False)
+                return
+
+        # Option 2: Sauvegarder dans un fichier JSON
         path = filedialog.asksaveasfilename(
-            title="Sauvegarder la partie",
+            title="Sauvegarder la partie dans un fichier",
             defaultextension=".json",
-            filetypes=[("JSON", "*.json")]
+            filetypes=[("JSON", "*.json")],
+            initialfile=f"{save_name}.json",
         )
         if not path:
             return
@@ -801,11 +997,11 @@ class Connect4App(tk.Tk):
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            messagebox.showinfo("Sauvegarde", "✅ Partie sauvegardée !")
+            messagebox.showinfo("Sauvegarde", f"✅ Partie sauvegardée dans '{path}' !")
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de sauvegarder : {e}")
 
-    def load_game(self):
+    def load_game(self, db=True):
         # stop any async job
         if self.pending_after is not None:
             try:
@@ -816,9 +1012,179 @@ class Connect4App(tk.Tk):
 
         self.robot_thinking = False
 
+        # Option 1: Charger depuis la base de données
+        if db and self.db_connection:
+            try:
+                # Récupérer la liste des sauvegardes
+                self.db_cursor.execute(
+                    """
+                    SELECT id, save_name, save_date 
+                    FROM saved_games 
+                    ORDER BY save_date DESC
+                """
+                )
+                saves = self.db_cursor.fetchall()
+
+                if not saves:
+                    messagebox.showinfo(
+                        "Chargement",
+                        "Aucune sauvegarde trouvée dans la base de données.",
+                    )
+                    if messagebox.askyesno(
+                        "Chargement",
+                        "Voulez-vous charger depuis un fichier à la place?",
+                    ):
+                        self.load_game(db=False)
+                    return
+
+                # Créer une fenêtre de sélection
+                selection_window = tk.Toplevel(self)
+                selection_window.title("Charger une partie depuis la base")
+                selection_window.geometry("500x350")
+
+                tk.Label(
+                    selection_window,
+                    text="Sélectionnez une sauvegarde:",
+                    font=("Arial", 12, "bold"),
+                ).pack(pady=10)
+
+                # Créer un Treeview pour afficher les sauvegardes
+                columns = ("ID", "Nom", "Date")
+                tree = ttk.Treeview(
+                    selection_window, columns=columns, show="headings", height=8
+                )
+
+                tree.heading("ID", text="ID")
+                tree.heading("Nom", text="Nom")
+                tree.heading("Date", text="Date de sauvegarde")
+
+                tree.column("ID", width=50, anchor="center")
+                tree.column("Nom", width=200)
+                tree.column("Date", width=200)
+
+                tree.pack(pady=10, padx=10, fill=tk.BOTH, expand=True)
+
+                # Ajouter les sauvegardes
+                for save in saves:
+                    save_id, save_name, save_date = save
+                    tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            save_id,
+                            save_name,
+                            save_date.strftime("%Y-%m-%d %H:%M:%S"),
+                        ),
+                    )
+
+                selected_id = None
+
+                def on_select():
+                    nonlocal selected_id
+                    selection = tree.selection()
+                    if not selection:
+                        messagebox.showwarning(
+                            "Sélection", "Veuillez sélectionner une sauvegarde."
+                        )
+                        return
+
+                    item = tree.item(selection[0])
+                    selected_id = item["values"][0]
+                    selection_window.destroy()
+                    load_from_db(selected_id)
+
+                def on_cancel():
+                    selection_window.destroy()
+
+                btn_frame = tk.Frame(selection_window)
+                btn_frame.pack(pady=10)
+
+                tk.Button(btn_frame, text="Charger", command=on_select, width=12).pack(
+                    side=tk.LEFT, padx=5
+                )
+                tk.Button(
+                    btn_frame,
+                    text="Charger depuis fichier",
+                    command=lambda: [
+                        selection_window.destroy(),
+                        self.load_game(db=False),
+                    ],
+                    width=18,
+                ).pack(side=tk.LEFT, padx=5)
+                tk.Button(btn_frame, text="Annuler", command=on_cancel, width=12).pack(
+                    side=tk.LEFT, padx=5
+                )
+
+                selection_window.transient(self)
+                selection_window.grab_set()
+
+                def load_from_db(save_id):
+                    try:
+                        self.db_cursor.execute(
+                            """
+                            SELECT rows, cols, starting_color, mode, game_index, 
+                                   moves, view_index, ai_mode, ai_depth
+                            FROM saved_games WHERE id = %s
+                        """,
+                            (save_id,),
+                        )
+
+                        data = self.db_cursor.fetchone()
+                        if not data:
+                            messagebox.showerror("Erreur", "Sauvegarde introuvable")
+                            return
+
+                        (
+                            rows,
+                            cols,
+                            start_color,
+                            mode,
+                            game_index,
+                            moves_json,
+                            view_index,
+                            ai_mode,
+                            ai_depth,
+                        ) = data
+
+                        # Convertir JSON en liste
+                        moves = json.loads(moves_json)
+
+                        # Appliquer les données chargées
+                        self.apply_loaded_data(
+                            rows,
+                            cols,
+                            start_color,
+                            mode,
+                            game_index,
+                            moves,
+                            view_index,
+                            ai_mode,
+                            ai_depth,
+                        )
+
+                        messagebox.showinfo(
+                            "Chargement",
+                            f"✅ Partie '{save_name}' chargée depuis la base de données !",
+                        )
+
+                    except Error as e:
+                        messagebox.showerror(
+                            "Erreur DB", f"Erreur lors du chargement: {e}"
+                        )
+
+                return
+
+            except Error as e:
+                messagebox.showerror("Erreur DB", f"Erreur d'accès à la base: {e}")
+                if messagebox.askyesno(
+                    "Erreur", "Voulez-vous charger depuis un fichier à la place?"
+                ):
+                    self.load_game(db=False)
+                return
+
+        # Option 2: Charger depuis un fichier JSON
         path = filedialog.askopenfilename(
-            title="Charger une partie",
-            filetypes=[("JSON", "*.json")]
+            title="Charger une partie depuis un fichier", filetypes=[("JSON", "*.json")]
         )
         if not path:
             return
@@ -830,6 +1196,7 @@ class Connect4App(tk.Tk):
             messagebox.showerror("Erreur", f"Fichier invalide : {e}")
             return
 
+        # Validation des données
         rows = data.get("rows")
         cols = data.get("cols")
         start = data.get("starting_color")
@@ -847,20 +1214,49 @@ class Connect4App(tk.Tk):
         if not isinstance(view_index, int) or not (0 <= view_index <= len(moves)):
             return messagebox.showerror("Erreur", "view_index invalide")
 
-        # apply loaded data
+        # Appliquer les données
+        self.apply_loaded_data(
+            rows,
+            cols,
+            start,
+            int(data.get("mode", 2)),
+            int(data.get("game_index", 1)),
+            moves,
+            view_index,
+            data.get("ai_mode", "random"),
+            self.clamp_int(data.get("ai_depth", 4), 1, 8, 4),
+        )
+
+        messagebox.showinfo(
+            "Chargement", f"✅ Partie chargée depuis '{os.path.basename(path)}' !"
+        )
+
+    def apply_loaded_data(
+        self,
+        rows,
+        cols,
+        start_color,
+        mode,
+        game_index,
+        moves,
+        view_index,
+        ai_mode,
+        ai_depth,
+    ):
+        """Applique les données chargées (utilisé par load_game)"""
         self.rows = rows
         self.cols = cols
-        self.starting_color = start
+        self.starting_color = start_color
 
-        self.mode_var.set(str(int(data.get("mode", 2))))
-        self.game_index = int(data.get("game_index", 1))
-        self.ai_var.set(data.get("ai_mode", "random"))
-        self.depth_var.set(str(self.clamp_int(data.get("ai_depth", 4), 1, 8, 4)))
+        self.mode_var.set(str(mode))
+        self.game_index = game_index
+        self.ai_var.set(ai_mode)
+        self.depth_var.set(str(ai_depth))
 
         self.moves = moves
         self.view_index = view_index
 
-        # rebuild board and replay moves up to view_index
+        # Reconstruire le board
         self.board = self.create_board()
         self.winning_cells = []
         self.game_over = False
@@ -878,7 +1274,7 @@ class Connect4App(tk.Tk):
 
         self.current = self.token_for_move_index(self.view_index)
 
-        # detect terminal state at loaded position
+        # Détecter l'état terminal
         if last_pos is not None and last_token is not None:
             rr, cc = last_pos
             cells = self.check_win_cells(self.board, rr, cc, last_token)
@@ -890,12 +1286,26 @@ class Connect4App(tk.Tk):
                 self.game_over = True
                 self.winner = None
 
-        # rebuild UI for size
+        # Reconstruire l'UI
         self.rebuild_column_widgets()
         self._after_state_change(trigger_robot=True)
 
-        messagebox.showinfo("Chargement", "✅ Partie chargée !")
+    # =======================
+    #       DESTRUCTOR
+    # =======================
+    def destroy(self):
+        """Ferme proprement la connexion à la DB"""
+        if self.db_cursor:
+            self.db_cursor.close()
+        if self.db_connection:
+            self.db_connection.close()
+            print("✅ Connexion à la base de données fermée")
+        super().destroy()
 
 
 if __name__ == "__main__":
-    Connect4App().mainloop()
+    app = Connect4App()
+    try:
+        app.mainloop()
+    except KeyboardInterrupt:
+        app.destroy()
