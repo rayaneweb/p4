@@ -5,6 +5,7 @@ import json
 import os
 import random
 
+
 class Connect4App(tk.Tk):
     # =======================
     #        CONSTANTS
@@ -48,8 +49,8 @@ class Connect4App(tk.Tk):
         self.pending_after = None
 
         # UI vars
-        self.mode_var = tk.StringVar(value="2")          # 0/1/2
-        self.ai_var = tk.StringVar(value="random")       # random/minimax
+        self.mode_var = tk.StringVar(value="2")  # 0/1/2
+        self.ai_var = tk.StringVar(value="random")  # random/minimax
         self.depth_var = tk.StringVar(value="4")
         self.status_var = tk.StringVar(value="")
         self.nav_var = tk.IntVar(value=0)
@@ -145,7 +146,7 @@ class Connect4App(tk.Tk):
 
     # --- winning line for highlight ---
     def check_win_cells(self, board, last_row, last_col, token):
-        dirs = [(0,1), (1,0), (1,1), (1,-1)]
+        dirs = [(0, 1), (1, 0), (1, 1), (1, -1)]
         for dr, dc in dirs:
             cells = [(last_row, last_col)]
 
@@ -162,7 +163,7 @@ class Connect4App(tk.Tk):
                 c -= dc
 
             if len(cells) >= self.CONNECT_N:
-                return cells[:self.CONNECT_N]
+                return cells[: self.CONNECT_N]
         return []
 
     # =======================
@@ -176,13 +177,21 @@ class Connect4App(tk.Tk):
                 if p == self.EMPTY:
                     continue
 
-                if c + 3 < self.cols and all(grid[r][c+i] == p for i in range(4)):
+                if c + 3 < self.cols and all(grid[r][c + i] == p for i in range(4)):
                     return True, p
-                if r + 3 < self.rows and all(grid[r+i][c] == p for i in range(4)):
+                if r + 3 < self.rows and all(grid[r + i][c] == p for i in range(4)):
                     return True, p
-                if r + 3 < self.rows and c + 3 < self.cols and all(grid[r+i][c+i] == p for i in range(4)):
+                if (
+                    r + 3 < self.rows
+                    and c + 3 < self.cols
+                    and all(grid[r + i][c + i] == p for i in range(4))
+                ):
                     return True, p
-                if r + 3 < self.rows and c + 3 < self.cols and all(grid[r+3-i][c+i] == p for i in range(4)):
+                if (
+                    r + 3 < self.rows
+                    and c + 3 < self.cols
+                    and all(grid[r + 3 - i][c + i] == p for i in range(4))
+                ):
                     return True, p
 
         if self.is_draw(grid):
@@ -222,22 +231,30 @@ class Connect4App(tk.Tk):
         # horiz
         for r in range(self.rows):
             for c in range(self.cols - 3):
-                score += self.evaluate_window([grid[r][c+i] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r][c + i] for i in range(4)], player
+                )
 
         # vert
         for c in range(self.cols):
             for r in range(self.rows - 3):
-                score += self.evaluate_window([grid[r+i][c] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r + i][c] for i in range(4)], player
+                )
 
         # diag \
         for r in range(self.rows - 3):
             for c in range(self.cols - 3):
-                score += self.evaluate_window([grid[r+i][c+i] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r + i][c + i] for i in range(4)], player
+                )
 
         # diag /
         for r in range(self.rows - 3):
             for c in range(self.cols - 3):
-                score += self.evaluate_window([grid[r+3-i][c+i] for i in range(4)], player)
+                score += self.evaluate_window(
+                    [grid[r + 3 - i][c + i] for i in range(4)], player
+                )
 
         return score
 
@@ -265,11 +282,11 @@ class Connect4App(tk.Tk):
         moves.sort(key=lambda c: abs(c - center))
 
         if maximizing:
-            best = -10**18
+            best = -(10**18)
             for col in moves:
                 g2 = self.copy_grid(grid)
                 self.drop_in_grid(g2, col, player)
-                val = self.minimax(g2, depth-1, alpha, beta, False, player)
+                val = self.minimax(g2, depth - 1, alpha, beta, False, player)
                 best = max(best, val)
                 alpha = max(alpha, best)
                 if alpha >= beta:
@@ -281,7 +298,7 @@ class Connect4App(tk.Tk):
             for col in moves:
                 g2 = self.copy_grid(grid)
                 self.drop_in_grid(g2, col, opp)
-                val = self.minimax(g2, depth-1, alpha, beta, True, player)
+                val = self.minimax(g2, depth - 1, alpha, beta, True, player)
                 best = min(best, val)
                 beta = min(beta, best)
                 if alpha >= beta:
@@ -296,30 +313,59 @@ class Connect4App(tk.Tk):
         top.pack(side=tk.TOP, fill=tk.X)
 
         ttk.Label(top, text="Mode joueurs:").pack(side=tk.LEFT)
-        mode_combo = ttk.Combobox(top, textvariable=self.mode_var, values=["0", "1", "2"],
-                                  width=4, state="readonly")
+        mode_combo = ttk.Combobox(
+            top,
+            textvariable=self.mode_var,
+            values=["0", "1", "2"],
+            width=4,
+            state="readonly",
+        )
         mode_combo.pack(side=tk.LEFT, padx=(6, 14))
-        mode_combo.bind("<<ComboboxSelected>>", lambda e: self.reset_game(new_game=True))
+        mode_combo.bind(
+            "<<ComboboxSelected>>", lambda e: self.reset_game(new_game=True)
+        )
 
         ttk.Label(top, text="IA:").pack(side=tk.LEFT)
-        ai_combo = ttk.Combobox(top, textvariable=self.ai_var, values=["random", "minimax"],
-                                width=10, state="readonly")
+        ai_combo = ttk.Combobox(
+            top,
+            textvariable=self.ai_var,
+            values=["random", "minimax"],
+            width=10,
+            state="readonly",
+        )
         ai_combo.pack(side=tk.LEFT, padx=(6, 10))
-        ai_combo.bind("<<ComboboxSelected>>", lambda e: self._after_state_change(trigger_robot=True))
+        ai_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda e: self._after_state_change(trigger_robot=True),
+        )
 
         ttk.Label(top, text="Profondeur:").pack(side=tk.LEFT)
-        depth_spin = ttk.Spinbox(top, from_=1, to=8, width=5, textvariable=self.depth_var,
-                                 command=self.render_ai_scores)
+        depth_spin = ttk.Spinbox(
+            top,
+            from_=1,
+            to=8,
+            width=5,
+            textvariable=self.depth_var,
+            command=self.render_ai_scores,
+        )
         depth_spin.pack(side=tk.LEFT, padx=(6, 14))
 
-        ttk.Button(top, text="Nouvelle partie", command=lambda: self.reset_game(new_game=True)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(
+            top, text="Nouvelle partie", command=lambda: self.reset_game(new_game=True)
+        ).pack(side=tk.LEFT, padx=6)
         ttk.Button(top, text="Stop", command=self.stop_game).pack(side=tk.LEFT, padx=6)
-        ttk.Button(top, text="💾 Sauver", command=self.save_game).pack(side=tk.LEFT, padx=6)
-        ttk.Button(top, text="📂 Charger", command=self.load_game).pack(side=tk.LEFT, padx=6)
+        ttk.Button(top, text="💾 Sauver", command=self.save_game).pack(
+            side=tk.LEFT, padx=6
+        )
+        ttk.Button(top, text="📂 Charger", command=self.load_game).pack(
+            side=tk.LEFT, padx=6
+        )
 
         status_bar = ttk.Frame(self, padding=(10, 0))
         status_bar.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 12)).pack(anchor="w", pady=8)
+        ttk.Label(status_bar, textvariable=self.status_var, font=("Segoe UI", 12)).pack(
+            anchor="w", pady=8
+        )
 
         body = ttk.Frame(self, padding=10)
         body.pack(fill=tk.BOTH, expand=True)
@@ -339,9 +385,14 @@ class Connect4App(tk.Tk):
 
         ttk.Label(right, text="Navigation\ncoups", justify="center").pack(pady=(0, 8))
         self.nav_scale = tk.Scale(
-            right, from_=0, to=0, orient="vertical",
-            showvalue=False, variable=self.nav_var, length=520,
-            command=lambda v: self.on_nav_change(int(float(v)))
+            right,
+            from_=0,
+            to=0,
+            orient="vertical",
+            showvalue=False,
+            variable=self.nav_var,
+            length=520,
+            command=lambda v: self.on_nav_change(int(float(v))),
         )
         self.nav_scale.pack(fill="y", expand=True)
 
@@ -361,7 +412,12 @@ class Connect4App(tk.Tk):
         row_scores.pack()
 
         for c in range(self.cols):
-            b = ttk.Button(row_btn, text=str(c+1), width=4, command=lambda cc=c: self.on_click(cc))
+            b = ttk.Button(
+                row_btn,
+                text=str(c + 1),
+                width=4,
+                command=lambda cc=c: self.on_click(cc),
+            )
             b.pack(side=tk.LEFT, padx=3, pady=2)
             self.col_buttons.append(b)
 
@@ -394,8 +450,9 @@ class Connect4App(tk.Tk):
         x0 = (W - board_w) / 2
         y0 = (H - board_h) / 2
 
-        self.canvas.create_rectangle(x0, y0, x0 + board_w, y0 + board_h,
-                                     fill=self.COLOR_BG, outline="")
+        self.canvas.create_rectangle(
+            x0, y0, x0 + board_w, y0 + board_h, fill=self.COLOR_BG, outline=""
+        )
 
         win_set = set(self.winning_cells)
 
@@ -403,13 +460,15 @@ class Connect4App(tk.Tk):
             for c in range(self.cols):
                 cx0 = x0 + c * cell + pad
                 cy0 = y0 + r * cell + pad
-                cx1 = x0 + (c+1) * cell - pad
-                cy1 = y0 + (r+1) * cell - pad
+                cx1 = x0 + (c + 1) * cell - pad
+                cy1 = y0 + (r + 1) * cell - pad
 
                 fill = self.cell_color(self.board[r][c])
                 outline = self.COLOR_WIN if (r, c) in win_set else ""
                 width = 4 if (r, c) in win_set else 1
-                self.canvas.create_oval(cx0, cy0, cx1, cy1, fill=fill, outline=outline, width=width)
+                self.canvas.create_oval(
+                    cx0, cy0, cx1, cy1, fill=fill, outline=outline, width=width
+                )
 
     # =======================
     #     STATUS / NAV
@@ -494,7 +553,7 @@ class Connect4App(tk.Tk):
             return True
 
         if self.view_index < len(self.moves):
-            del self.moves[self.view_index:]
+            del self.moves[self.view_index :]
 
         self.moves.append(col)
         self.view_index = len(self.moves)
@@ -531,7 +590,11 @@ class Connect4App(tk.Tk):
         if not cont:
             return
 
-        if mode in (0, 1) and not self.is_human_turn(mode, self.current) and not self.game_over:
+        if (
+            mode in (0, 1)
+            and not self.is_human_turn(mode, self.current)
+            and not self.game_over
+        ):
             self.after(120, self.robot_step)
 
     # =======================
@@ -582,10 +645,10 @@ class Connect4App(tk.Tk):
             else:
                 g2 = self.copy_grid(grid0)
                 self.drop_in_grid(g2, col, player)
-                val = self.minimax(g2, depth-1, -10**18, 10**18, False, player)
+                val = self.minimax(g2, depth - 1, -(10**18), 10**18, False, player)
                 self.score_labels[col].set(str(int(val)))
 
-            self.pending_after = self.after(40, lambda: step(i+1))  # ~25 fps
+            self.pending_after = self.after(40, lambda: step(i + 1))  # ~25 fps
 
         step(0)
 
@@ -655,7 +718,7 @@ class Connect4App(tk.Tk):
         col_list = list(range(self.cols))
         col_list.sort(key=lambda c: abs(c - center))
 
-        state = {"best_col": None, "best_val": -10**18}
+        state = {"best_col": None, "best_val": -(10**18)}
 
         def step(i=0):
             if self.game_over:
@@ -686,19 +749,19 @@ class Connect4App(tk.Tk):
             col = col_list[i]
             if col not in valids:
                 self.score_labels[col].set("N/A")
-                self.pending_after = self.after(30, lambda: step(i+1))
+                self.pending_after = self.after(30, lambda: step(i + 1))
                 return
 
             g2 = self.copy_grid(grid0)
             self.drop_in_grid(g2, col, player)
-            val = self.minimax(g2, depth-1, -10**18, 10**18, False, player)
+            val = self.minimax(g2, depth - 1, -(10**18), 10**18, False, player)
             self.score_labels[col].set(str(int(val)))
 
             if val > state["best_val"]:
                 state["best_val"] = val
                 state["best_col"] = col
 
-            self.pending_after = self.after(40, lambda: step(i+1))  # ~25 fps
+            self.pending_after = self.after(40, lambda: step(i + 1))  # ~25 fps
 
         step(0)
 
@@ -716,7 +779,9 @@ class Connect4App(tk.Tk):
             return
 
         mode = int(self.mode_var.get())
-        self.set_buttons_state((not self.robot_thinking) and self.is_human_turn(mode, self.current))
+        self.set_buttons_state(
+            (not self.robot_thinking) and self.is_human_turn(mode, self.current)
+        )
 
         if trigger_robot and (not self.robot_thinking) and (not self.game_over):
             if not self.is_human_turn(mode, self.current):
@@ -793,7 +858,7 @@ class Connect4App(tk.Tk):
         path = filedialog.asksaveasfilename(
             title="Sauvegarder la partie",
             defaultextension=".json",
-            filetypes=[("JSON", "*.json")]
+            filetypes=[("JSON", "*.json")],
         )
         if not path:
             return
@@ -817,8 +882,7 @@ class Connect4App(tk.Tk):
         self.robot_thinking = False
 
         path = filedialog.askopenfilename(
-            title="Charger une partie",
-            filetypes=[("JSON", "*.json")]
+            title="Charger une partie", filetypes=[("JSON", "*.json")]
         )
         if not path:
             return
