@@ -280,3 +280,36 @@ INSERT INTO games (
     'partie_test_3131313', -- save_name
     '[3,1,3,1,3,1,3]'::jsonb -- moves (suite 3131313)
 ) ON CONFLICT (moves_hash) DO NOTHING;
+ALTER TABLE saved_games ALTER COLUMN rows SET DEFAULT 9;
+ALTER TABLE saved_games ALTER COLUMN cols SET DEFAULT 9;
+ALTER TABLE games ALTER COLUMN rows_count SET DEFAULT 9;
+ALTER TABLE games ALTER COLUMN cols_count SET DEFAULT 9;
+ALTER TABLE saved_games
+ADD COLUMN IF NOT EXISTS confidence INTEGER NOT NULL DEFAULT 1
+CHECK (confidence BETWEEN 0 AND 5);
+ALTER TABLE games
+ADD COLUMN IF NOT EXISTS confidence INTEGER NOT NULL DEFAULT 1
+CHECK (confidence BETWEEN 0 AND 5);
+UPDATE saved_games SET confidence = 1 WHERE confidence IS NULL;
+-- ou
+UPDATE games SET confidence = 1 WHERE confidence IS NULL;
+ALTER TABLE saved_games
+ADD COLUMN IF NOT EXISTS distinct_cols INTEGER NOT NULL DEFAULT 0
+CHECK (distinct_cols BETWEEN 0 AND 20);
+ALTER TABLE games
+ADD COLUMN IF NOT EXISTS distinct_cols INTEGER NOT NULL DEFAULT 0
+CHECK (distinct_cols BETWEEN 0 AND 20);
+UPDATE saved_games SET confidence = 1 WHERE confidence IS NULL;
+UPDATE saved_games SET distinct_cols = 0 WHERE distinct_cols IS NULL;
+ALTER TABLE saved_games
+ADD COLUMN IF NOT EXISTS confiance INTEGER DEFAULT 1 CHECK (confiance >= 0);
+
+ALTER TABLE saved_games
+RENAME COLUMN confiance TO confidence;
+-- Copier les valeurs si besoin
+UPDATE saved_games
+SET confidence = COALESCE(confidence, confiance);
+
+-- Supprimer la colonne en trop
+ALTER TABLE saved_games
+DROP COLUMN confiance;

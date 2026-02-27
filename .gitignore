@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+.venv/
+venv/
+
+# Local / sensitive configs
+config.json
+*.env
+.env
+.env.*
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Scraping outputs / caches / datasets
+scraped_moves/
+player_cache.json
+player_ids.json
+scraped_tables.json
+partie.json
+x.json
+
+# Other local folders
+profile/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Apps locales avec credentials
+game.py
+database_viewer.py

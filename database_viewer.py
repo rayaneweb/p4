@@ -1,7 +1,15 @@
 """
 OUTIL DE VISUALISATION DE LA BASE DE DONNÉES PUISSANCE 4
 Version compatible avec l'application game.py (table saved_games uniquement)
-Mission 2.2 : Navigation dans les parties et positions
+
+✅ AJOUT :
+- Afficher confidence/confiance
+- Afficher distinct_cols (nombre de colonnes distinctes utilisées)
+
+✅ MISSION 3 :
+- Informations de la partie dynamiques (position, prochain joueur)
+- Détails de la position dynamiques (dernier coup, cases occupées, colonnes jouables, hash)
+- Navigation fonctionnelle (ne réécrase plus view_index)
 """
 
 import tkinter as tk
@@ -9,17 +17,13 @@ from tkinter import ttk, filedialog, messagebox
 import psycopg2
 import json
 import hashlib
-from datetime import datetime
 import os
 
-# =======================
-# CONFIGURATION DATABASE
-# =======================
 DB_CONFIG = {
     "host": "localhost",
     "database": "puissance4_db",
     "user": "postgres",
-    "password": "rayane",  # CHANGEZ SI NÉCESSAIRE
+    "password": "rayane",
     "port": 5432,
 }
 
@@ -27,14 +31,12 @@ DB_CONFIG = {
 class DatabaseViewer(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Visualisateur Base de Données Puissance 4 - Mission 2.2")
+        self.title("Visualisateur Base de Données Puissance 4")
         self.geometry("1400x800")
 
-        # Connexion à la base
         self.conn = None
         self.connect_to_db()
 
-        # Variables d'état
         self.current_game_id = None
         self.moves = []
         self.view_index = 0
@@ -42,10 +44,11 @@ class DatabaseViewer(tk.Tk):
         self.board_cols = 9
         self.starting_color = "R"
 
-        # Variables d'interface
+        # ✅ NEW: meta statique de la partie (pour mise à jour dynamique sans SQL)
+        self.game_meta = {}
+
         self.search_var = tk.StringVar()
 
-        # Constantes graphiques
         self.COLORS = {
             "bg": "#00478e",
             "hole": "#e3f2fd",
@@ -59,15 +62,8 @@ class DatabaseViewer(tk.Tk):
         self.RED = "R"
         self.YELLOW = "Y"
 
-        # Construction de l'interface
         self.build_ui()
-
-        # Chargement initial
         self.load_games_list()
-
-    # =======================
-    # CONNEXION DATABASE
-    # =======================
 
     def connect_to_db(self):
         try:
@@ -77,11 +73,7 @@ class DatabaseViewer(tk.Tk):
             messagebox.showerror(
                 "Erreur de connexion",
                 f"Impossible de se connecter à la base:\n{str(e)}\n\n"
-                f"Assurez-vous que:\n"
-                f"1. PostgreSQL est en cours d'exécution\n"
-                f"2. La base 'puissance4_db' existe\n"
-                f"3. Les identifiants sont corrects\n"
-                f"4. La table 'saved_games' existe",
+                f"Assurez-vous que PostgreSQL tourne et que la table 'saved_games' existe.",
             )
             self.destroy()
 
@@ -91,20 +83,27 @@ class DatabaseViewer(tk.Tk):
                 cursor.execute(query, params or ())
                 if fetch:
                     return cursor.fetchall()
-                else:
-                    self.conn.commit()
-                    return cursor.rowcount
+                self.conn.commit()
+                return cursor.rowcount
         except Exception as e:
             print(f"❌ Erreur requête: {e}")
             messagebox.showerror("Erreur SQL", str(e))
             return None
 
-    # =======================
-    # INTERFACE GRAPHIQUE
-    # =======================
+    def column_exists(self, table_name: str, column_name: str) -> bool:
+        q = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema='public'
+              AND table_name=%s
+              AND column_name=%s
+        )
+        """
+        r = self.execute_query(q, (table_name, column_name))
+        return bool(r and r[0] and r[0][0])
 
     def build_ui(self):
-        # Barre supérieure
         top_frame = ttk.Frame(self, padding=10)
         top_frame.pack(fill=tk.X)
 
@@ -122,7 +121,6 @@ class DatabaseViewer(tk.Tk):
             side=tk.LEFT, padx=5
         )
 
-        # Boutons d'action
         action_frame = ttk.Frame(top_frame)
         action_frame.pack(side=tk.RIGHT)
 
@@ -136,36 +134,42 @@ class DatabaseViewer(tk.Tk):
             action_frame, text="🗑 Supprimer", command=self.delete_selected_game
         ).pack(side=tk.LEFT, padx=2)
 
-        # Conteneur principal
         main_container = ttk.Frame(self)
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # Panneau gauche : Liste des parties
-        left_panel = ttk.Frame(main_container, width=450)
+        left_panel = ttk.Frame(main_container, width=520)
         left_panel.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 10))
         left_panel.pack_propagate(False)
 
-        # Liste des parties avec scrollbar
         list_frame = ttk.LabelFrame(left_panel, text="Parties sauvegardées", padding=5)
         list_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Treeview pour les parties
-        columns = ("ID", "Nom", "Taille", "Mode", "IA", "Coups", "Date")
+        columns = (
+            "ID",
+            "Nom",
+            "Taille",
+            "Mode",
+            "IA",
+            "Confiance",
+            "ColsUsed",
+            "Coups",
+            "Date",
+        )
         self.games_tree = ttk.Treeview(
             list_frame, columns=columns, show="headings", height=20
         )
 
-        # Configuration des colonnes
         col_config = [
             ("ID", 50, "center"),
-            ("Nom", 150, "w"),
+            ("Nom", 170, "w"),
             ("Taille", 70, "center"),
-            ("Mode", 100, "center"),
+            ("Mode", 110, "center"),
             ("IA", 120, "center"),
+            ("Confiance", 80, "center"),
+            ("ColsUsed", 80, "center"),
             ("Coups", 70, "center"),
             ("Date", 120, "center"),
         ]
-
         for col, width, anchor in col_config:
             self.games_tree.heading(col, text=col)
             self.games_tree.column(col, width=width, anchor=anchor)
@@ -180,11 +184,9 @@ class DatabaseViewer(tk.Tk):
 
         self.games_tree.bind("<<TreeviewSelect>>", self.on_game_select)
 
-        # Panneau droit : Visualisation
         right_panel = ttk.Frame(main_container)
         right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-        # Info de la partie
         info_frame = ttk.LabelFrame(
             right_panel, text="Informations de la partie", padding=10
         )
@@ -193,7 +195,6 @@ class DatabaseViewer(tk.Tk):
         self.info_text = tk.Text(info_frame, height=8, width=60, font=("Courier", 9))
         self.info_text.pack(fill=tk.BOTH, expand=True)
 
-        # Canvas pour le plateau
         canvas_frame = ttk.LabelFrame(
             right_panel, text="Visualisation du plateau", padding=10
         )
@@ -202,7 +203,6 @@ class DatabaseViewer(tk.Tk):
         self.canvas = tk.Canvas(canvas_frame, bg="white", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        # Contrôles de navigation
         nav_frame = ttk.Frame(right_panel)
         nav_frame.pack(fill=tk.X, pady=10)
 
@@ -234,7 +234,6 @@ class DatabaseViewer(tk.Tk):
         )
         self.nav_scale.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10)
 
-        # Panneau inférieur : Détails position
         bottom_frame = ttk.LabelFrame(
             right_panel, text="Détails de la position", padding=10
         )
@@ -246,14 +245,31 @@ class DatabaseViewer(tk.Tk):
         self.pos_info_text.pack(fill=tk.BOTH, expand=True)
 
     # =======================
-    # FONCTIONNALITÉS PRINCIPALES
+    # LIST + DETAILS
     # =======================
-
     def load_games_list(self):
-        """Charge la liste des parties depuis saved_games"""
         self.games_tree.delete(*self.games_tree.get_children())
 
-        query = """
+        has_confidence = self.column_exists("saved_games", "confidence")
+        has_confiance = self.column_exists("saved_games", "confiance")
+        has_distinct = self.column_exists("saved_games", "distinct_cols")
+
+        conf_expr = "1"
+        if has_confidence:
+            conf_expr = "COALESCE(confidence, 1)"
+        elif has_confiance:
+            conf_expr = "COALESCE(confiance, 1)"
+
+        distinct_expr = """
+        (
+          SELECT COUNT(DISTINCT (x)::int)
+          FROM jsonb_array_elements_text(moves) AS x
+        )
+        """
+        if has_distinct:
+            distinct_expr = f"COALESCE(distinct_cols, {distinct_expr})"
+
+        query = f"""
         SELECT 
             id,
             save_name,
@@ -265,6 +281,8 @@ class DatabaseViewer(tk.Tk):
                 ELSE 'Inconnu'
             END as mode_jeu,
             CONCAT(ai_mode, ' (', ai_depth, ')') as ia,
+            {conf_expr} as confiance,
+            {distinct_expr} as distinct_cols,
             jsonb_array_length(moves) as nb_coups,
             TO_CHAR(save_date, 'DD/MM HH24:MI') as date_save
         FROM saved_games
@@ -272,8 +290,6 @@ class DatabaseViewer(tk.Tk):
         """
 
         params = []
-
-        # Recherche texte
         search_text = self.search_var.get().strip()
         if search_text:
             query += " AND (save_name ILIKE %s OR id::TEXT LIKE %s)"
@@ -282,178 +298,193 @@ class DatabaseViewer(tk.Tk):
         query += " ORDER BY save_date DESC LIMIT 100"
 
         games = self.execute_query(query, params)
-
         if games:
             for game in games:
                 self.games_tree.insert("", "end", values=game)
 
     def on_game_select(self, event):
-        """Quand une partie est sélectionnée"""
         selection = self.games_tree.selection()
         if not selection:
             return
-
         item = self.games_tree.item(selection[0])
-        game_id = item["values"][0]
-        self.current_game_id = game_id
-        self.load_game_details(game_id)
+        self.current_game_id = item["values"][0]
+        self.load_game_details(self.current_game_id)
 
     def load_game_details(self, game_id):
-        """Charge les détails d'une partie"""
-        query = """
+        has_confidence = self.column_exists("saved_games", "confidence")
+        has_confiance = self.column_exists("saved_games", "confiance")
+        has_distinct = self.column_exists("saved_games", "distinct_cols")
+
+        conf_expr = "1"
+        if has_confidence:
+            conf_expr = "COALESCE(confidence, 1)"
+        elif has_confiance:
+            conf_expr = "COALESCE(confiance, 1)"
+
+        distinct_expr = "0"
+        if has_distinct:
+            distinct_expr = "COALESCE(distinct_cols, 0)"
+
+        query = f"""
         SELECT 
             id, save_name, rows, cols, starting_color,
             mode, game_index, ai_mode, ai_depth,
-            moves, view_index, save_date
-        FROM saved_games 
+            moves, view_index, save_date,
+            {conf_expr} as confiance,
+            {distinct_expr} as distinct_cols
+        FROM saved_games
         WHERE id = %s
         """
 
         result = self.execute_query(query, (game_id,))
-
-        if result and result[0]:
-            game_data = result[0]
-
-            # Décoder les mouvements JSON
-            moves_json = game_data[9]  # moves est à l'index 9
-            if moves_json:
-                # Si c'est déjà un string JSON, le parser
-                if isinstance(moves_json, str):
-                    self.moves = json.loads(moves_json)
-                else:
-                    # Si c'est déjà une liste (déjà désérialisé par psycopg2)
-                    self.moves = moves_json
-            else:
-                self.moves = []
-
-            self.board_rows = game_data[2]  # rows
-            self.board_cols = game_data[3]  # cols
-            self.starting_color = game_data[4]  # starting_color
-            self.view_index = game_data[10] if len(game_data) > 10 else 0  # view_index
-
-            # Afficher les informations
-            info = f"""
-╔══════════════════════════════════════════════════════════════╗
-║ PARTIE: {game_data[1]} (ID: {game_data[0]})                  
-╠══════════════════════════════════════════════════════════════╣
-║ • Taille: {self.board_rows}x{self.board_cols}                                      
-║ • Premier joueur: {'Rouge' if self.starting_color == 'R' else 'Jaune'}                
-║ • Mode: {self.get_mode_name(game_data[5])}                    
-║ • Index partie: {game_data[6]}                                
-║ • IA: {game_data[7]} (profondeur: {game_data[8]})               
-║ • Coups joués: {len(self.moves)}                                  
-║ • Position actuelle: {self.view_index}                        
-║ • Sauvegardée: {game_data[11].strftime('%d/%m/%Y %H:%M:%S')}   
-╚══════════════════════════════════════════════════════════════╝
-            """
-
-            self.info_text.delete(1.0, tk.END)
-            self.info_text.insert(1.0, info)
-            self.info_text.config(state="disabled")
-
-            # Mettre à jour la navigation
-            self.update_navigation()
-
-            # Afficher la position actuelle
-            self.display_current_position()
-
-    def display_current_position(self):
-        """Affiche la position actuelle sur le canvas"""
-        if not self.moves and self.view_index == 0:
-            # Afficher plateau vide
-            board = [
-                [self.EMPTY for _ in range(self.board_cols)]
-                for _ in range(self.board_rows)
-            ]
-            self.draw_board(board)
-            self.display_position_info(None)
+        if not result or not result[0]:
             return
 
-        # Reconstruire le board jusqu'à view_index
+        game_data = result[0]
+
+        moves_json = game_data[9]
+        if moves_json:
+            self.moves = (
+                json.loads(moves_json)
+                if isinstance(moves_json, str)
+                else list(moves_json)
+            )
+        else:
+            self.moves = []
+
+        self.board_rows = game_data[2]
+        self.board_cols = game_data[3]
+        self.starting_color = game_data[4]
+        self.view_index = int(game_data[10]) if game_data[10] is not None else 0
+
+        # clamp au cas où
+        self.view_index = max(0, min(self.view_index, len(self.moves)))
+
+        confiance = int(game_data[12]) if game_data[12] is not None else 1
+        distinct_cols = (
+            int(game_data[13])
+            if (has_distinct and game_data[13] is not None)
+            else (len(set(self.moves)) if self.moves else 0)
+        )
+
+        # ✅ stock meta statique (pour update dynamique sans SQL)
+        self.game_meta = {
+            "id": game_data[0],
+            "save_name": game_data[1],
+            "mode": game_data[5],
+            "game_index": game_data[6],
+            "ai_mode": game_data[7],
+            "ai_depth": game_data[8],
+            "confiance": confiance,
+            "distinct_cols": distinct_cols,
+            "save_date": game_data[11],
+        }
+
+        self.update_game_info_panel()
+        self.update_navigation()
+        self.display_current_position()
+
+    def update_game_info_panel(self):
+        """Met à jour le panneau 'Informations de la partie' selon self.view_index, sans requête SQL."""
+        if not self.game_meta:
+            return
+
+        total_moves = len(self.moves)
+        next_player = (
+            "Rouge" if self.get_player_at_index(self.view_index) == "R" else "Jaune"
+        )
+
+        info = f"""
+╔══════════════════════════════════════════════════════════════╗
+║ PARTIE: {self.game_meta['save_name']} (ID: {self.game_meta['id']})
+╠══════════════════════════════════════════════════════════════╣
+║ • Taille: {self.board_rows}x{self.board_cols}
+║ • Premier joueur: {'Rouge' if self.starting_color == 'R' else 'Jaune'}
+║ • Mode: {self.get_mode_name(self.game_meta['mode'])}
+║ • Index partie: {self.game_meta['game_index']}
+║ • IA: {self.game_meta['ai_mode']} (profondeur: {self.game_meta['ai_depth']})
+║ • Confiance: {self.game_meta['confiance']}
+║ • Colonnes utilisées: {self.game_meta['distinct_cols']}
+║ • Coups joués: {total_moves}
+║ • Position actuelle: {self.view_index}/{total_moves}
+║ • Prochain joueur: {next_player}
+║ • Sauvegardée: {self.game_meta['save_date'].strftime('%d/%m/%Y %H:%M:%S')}
+╚══════════════════════════════════════════════════════════════╝
+"""
+
+        self.info_text.config(state="normal")
+        self.info_text.delete(1.0, tk.END)
+        self.info_text.insert(1.0, info)
+        self.info_text.config(state="disabled")
+
+    # =======================
+    # BOARD VIEW
+    # =======================
+    def display_current_position(self):
         board = self.reconstruct_board(self.view_index)
         self.draw_board(board)
 
-        # Afficher info position
+        # Joueur "à jouer" sur la position courante
+        to_play = self.get_player_at_index(self.view_index)
+
+        # Dernier coup = coup qui vient d'être joué (si view_index > 0)
+        last_col = self.moves[self.view_index - 1] if self.view_index > 0 else None
+
         move_info = {
             "index": self.view_index,
-            "column": (
-                self.moves[self.view_index - 1]
-                if self.view_index > 0 and self.view_index <= len(self.moves)
-                else None
-            ),
-            "player": self.get_player_at_index(self.view_index),
+            "last_col": last_col,
+            "to_play": to_play,
             "board": board,
         }
         self.display_position_info(move_info)
 
     def reconstruct_board(self, up_to_index):
-        """Reconstruit le plateau jusqu'à un index donné"""
-        # Créer plateau vide
         board = [
             [self.EMPTY for _ in range(self.board_cols)] for _ in range(self.board_rows)
         ]
-
-        # Rejouer les coups
         current_color = self.starting_color
+
         for i in range(min(up_to_index, len(self.moves))):
             col = self.moves[i]
-
-            # Trouver la première ligne vide dans cette colonne
             for row in range(self.board_rows - 1, -1, -1):
                 if board[row][col] == self.EMPTY:
                     board[row][col] = current_color
                     break
-
-            # Changer de joueur
             current_color = self.YELLOW if current_color == self.RED else self.RED
 
         return board
 
     def get_player_at_index(self, move_index):
-        """Détermine quel joueur doit jouer à un index donné"""
+        # joueur qui DOIT jouer au coup move_index
         if move_index == 0:
             return self.starting_color
-
-        # Le joueur qui vient de jouer au coup précédent
-        if move_index <= len(self.moves):
-            # Si le coup a été joué, déterminer qui a joué
-            return (
-                self.YELLOW
-                if ((move_index - 1) % 2 == 1) ^ (self.starting_color == self.YELLOW)
-                else self.RED
-            )
-        else:
-            # Sinon, déterminer qui devrait jouer
-            return (
-                self.YELLOW
-                if (move_index % 2 == 1) ^ (self.starting_color == self.YELLOW)
-                else self.RED
-            )
+        # si starting_color = R, alors coup 1 joué par R, coup 2 par Y, etc.
+        # joueur à jouer au move_index = inverse du dernier joueur joué
+        last_player = (
+            self.starting_color
+            if (move_index - 1) % 2 == 0
+            else (self.YELLOW if self.starting_color == self.RED else self.RED)
+        )
+        return self.YELLOW if last_player == self.RED else self.RED
 
     def draw_board(self, board):
-        """Dessine le plateau sur le canvas"""
         self.canvas.delete("all")
-
         if not board:
             return
 
         rows = len(board)
         cols = len(board[0])
 
-        # Dimensions
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
-
         if canvas_width < 10 or canvas_height < 10:
             canvas_width = 500
             canvas_height = 500
 
-        # Calcul des cellules
         cell_size = min(canvas_width / cols, canvas_height / rows) * 0.8
         margin_x = (canvas_width - cols * cell_size) / 2
         margin_y = (canvas_height - rows * cell_size) / 2
 
-        # Dessiner le fond
         self.canvas.create_rectangle(
             margin_x,
             margin_y,
@@ -463,15 +494,12 @@ class DatabaseViewer(tk.Tk):
             outline="",
         )
 
-        # Dessiner les trous et jetons
         hole_radius = cell_size * 0.4
-
         for r in range(rows):
             for c in range(cols):
                 center_x = margin_x + c * cell_size + cell_size / 2
                 center_y = margin_y + r * cell_size + cell_size / 2
 
-                # Couleur selon le contenu
                 if board[r][c] == self.RED:
                     color = self.COLORS["red"]
                 elif board[r][c] == self.YELLOW:
@@ -479,7 +507,6 @@ class DatabaseViewer(tk.Tk):
                 else:
                     color = self.COLORS["hole"]
 
-                # Dessiner le jeton/trou
                 self.canvas.create_oval(
                     center_x - hole_radius,
                     center_y - hole_radius,
@@ -490,7 +517,6 @@ class DatabaseViewer(tk.Tk):
                     width=2,
                 )
 
-        # Afficher les numéros de colonnes
         for c in range(cols):
             x = margin_x + c * cell_size + cell_size / 2
             y = margin_y + rows * cell_size + 20
@@ -498,36 +524,60 @@ class DatabaseViewer(tk.Tk):
                 x, y, text=str(c + 1), fill="white", font=("Arial", 12, "bold")
             )
 
+    # =======================
+    # POSITION DETAILS (DYNAMIQUE)
+    # =======================
+    def count_legal_columns(self, board):
+        """Nombre de colonnes jouables = cases vides sur la première ligne."""
+        if not board:
+            return 0
+        legal = 0
+        for col in range(self.board_cols):
+            if board[0][col] == self.EMPTY:
+                legal += 1
+        return legal
+
     def display_position_info(self, move):
-        """Affiche les informations de la position"""
-        if move is None:
-            info = """
-╔══════════════════════════════════════════════════════════════╗
-║ POSITION INITIALE - Coup 0                                        
-╠══════════════════════════════════════════════════════════════╣
-║ • Aucun coup joué                                           
-║ • Plateau vide                                              
-║ • Prochain joueur: Rouge                                    
-╚══════════════════════════════════════════════════════════════╝
-            """
+        board = move["board"] if move else None
+        if not board:
+            board = [
+                [self.EMPTY for _ in range(self.board_cols)]
+                for _ in range(self.board_rows)
+            ]
+
+        # dernier coup
+        if move and move["last_col"] is not None and move["index"] > 0:
+            last_move = f"Colonne {move['last_col'] + 1}"
         else:
-            player_name = "Rouge" if move["player"] == "R" else "Jaune"
-            col_info = (
-                f"Colonne: {move['column'] + 1}"
-                if move["column"] is not None and move["index"] > 0
-                else "Aucun coup"
-            )
+            last_move = "Aucun"
 
-            info = f"""
+        # joueur à jouer (position courante)
+        to_play = move["to_play"] if move else self.starting_color
+        player_name = "Rouge" if to_play == "R" else "Jaune"
+
+        filled_cells = sum(row.count("R") + row.count("Y") for row in board)
+        legal_cols = self.count_legal_columns(board)
+        board_hash = self.calculate_board_hash(board)[:16]
+
+        title = (
+            "POSITION INITIALE - Coup 0"
+            if (move and move["index"] == 0)
+            else f"POSITION - Coup {move['index'] if move else 0}"
+        )
+
+        info = f"""
 ╔══════════════════════════════════════════════════════════════╗
-║ POSITION - Coup {move['index']}                                        
+║ {title}
 ╠══════════════════════════════════════════════════════════════╣
-║ • {col_info}                                      
-║ • Joueur actuel: {player_name}                  
-║ • Hash de position: {self.calculate_board_hash(move['board'])[:16]}...
+║ • Dernier coup: {last_move}
+║ • Joueur actuel (à jouer): {player_name}
+║ • Cases occupées: {filled_cells}
+║ • Colonnes jouables: {legal_cols}
+║ • Hash position: {board_hash}...
 ╚══════════════════════════════════════════════════════════════╝
-            """
+"""
 
+        self.pos_info_text.config(state="normal")
         self.pos_info_text.delete(1.0, tk.END)
         self.pos_info_text.insert(1.0, info)
         self.pos_info_text.config(state="disabled")
@@ -535,55 +585,48 @@ class DatabaseViewer(tk.Tk):
     # =======================
     # NAVIGATION
     # =======================
-
     def update_navigation(self):
-        """Met à jour les contrôles de navigation"""
         total = len(self.moves)
         self.nav_scale.config(to=max(0, total))
         self.nav_scale.set(self.view_index)
         self.nav_label.config(text=f"Coup {self.view_index}/{total}")
 
     def navigate_to(self, index):
-        """Va à un coup spécifique"""
         if 0 <= index <= len(self.moves):
             self.view_index = index
             self.update_navigation()
             self.display_current_position()
+            self.update_game_info_panel()
 
     def prev_move(self):
-        """Coup précédent"""
         if self.view_index > 0:
             self.navigate_to(self.view_index - 1)
 
     def next_move(self):
-        """Coup suivant"""
         if self.view_index < len(self.moves):
             self.navigate_to(self.view_index + 1)
 
     def go_to_end(self):
-        """Va au dernier coup"""
         if self.moves:
             self.navigate_to(len(self.moves))
+        else:
+            self.navigate_to(0)
 
     def on_scale_move(self, value):
-        """Quand le curseur de navigation est bougé"""
         try:
             index = int(float(value))
             self.navigate_to(index)
-        except:
+        except Exception:
             pass
 
     # =======================
-    # FONCTIONNALITÉS AVANCÉES
+    # ADVANCED
     # =======================
-
     def import_json(self):
-        """Importe une partie depuis un fichier JSON"""
         filepath = filedialog.askopenfilename(
             title="Importer une partie JSON",
             filetypes=[("Fichiers JSON", "*.json"), ("Tous les fichiers", "*.*")],
         )
-
         if not filepath:
             return
 
@@ -591,18 +634,15 @@ class DatabaseViewer(tk.Tk):
             with open(filepath, "r", encoding="utf-8") as f:
                 game_data = json.load(f)
 
-            # Vérifier la structure du fichier
             required_fields = ["rows", "cols", "starting_color", "moves"]
             for field in required_fields:
                 if field not in game_data:
                     raise ValueError(f"Champ manquant: {field}")
 
-            # Vérifier si la partie existe déjà
             query = "SELECT id FROM saved_games WHERE save_name = %s"
             existing = self.execute_query(
                 query, (os.path.basename(filepath).replace(".json", ""),)
             )
-
             if existing:
                 messagebox.showinfo(
                     "Partie existante",
@@ -610,17 +650,13 @@ class DatabaseViewer(tk.Tk):
                 )
                 return
 
-            # Insérer la nouvelle partie
             query = """
             INSERT INTO saved_games 
-            (save_name, rows, cols, starting_color, mode, game_index, 
-             moves, view_index, ai_mode, ai_depth)
+            (save_name, rows, cols, starting_color, mode, game_index, moves, view_index, ai_mode, ai_depth)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """
-
             save_name = os.path.basename(filepath).replace(".json", "")
-
             params = (
                 save_name,
                 game_data["rows"],
@@ -635,7 +671,6 @@ class DatabaseViewer(tk.Tk):
             )
 
             result = self.execute_query(query, params, fetch=False)
-
             if result:
                 new_game_id = self.execute_query("SELECT LASTVAL()")[0][0]
                 messagebox.showinfo(
@@ -644,12 +679,10 @@ class DatabaseViewer(tk.Tk):
                 self.load_games_list()
             else:
                 messagebox.showerror("Erreur", "Échec de l'importation")
-
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors de l'import: {str(e)}")
 
     def show_stats(self):
-        """Affiche les statistiques générales"""
         query = """
         SELECT 
             COUNT(*) as total_games,
@@ -661,32 +694,27 @@ class DatabaseViewer(tk.Tk):
             MODE() WITHIN GROUP (ORDER BY ai_mode) as most_common_ai
         FROM saved_games
         """
-
         stats = self.execute_query(query)
-
         if stats and stats[0]:
-            stats_data = stats[0]
-
+            s = stats[0]
             stats_text = f"""
 ╔══════════════════════════════════════════════════════════════╗
-║ STATISTIQUES GÉNÉRALES                                      
+║ STATISTIQUES GÉNÉRALES
 ╠══════════════════════════════════════════════════════════════╣
-║ • Parties totales: {stats_data[0] or 0}                                  
-║ • Parties uniques: {stats_data[1] or 0}                                  
-║ • Coups moyens par partie: {stats_data[2] or 0}                          
-║ • Coups minimum: {stats_data[3] or 0}                                    
-║ • Coups maximum: {stats_data[4] or 0}                                    
-║ • Tailles différentes: {stats_data[5] or 0}                              
-║ • IA la plus utilisée: {stats_data[6] or 'N/A'}                          
+║ • Parties totales: {s[0] or 0}
+║ • Parties uniques: {s[1] or 0}
+║ • Coups moyens par partie: {s[2] or 0}
+║ • Coups minimum: {s[3] or 0}
+║ • Coups maximum: {s[4] or 0}
+║ • Tailles différentes: {s[5] or 0}
+║ • IA la plus utilisée: {s[6] or 'N/A'}
 ╚══════════════════════════════════════════════════════════════╝
             """
-
             messagebox.showinfo("Statistiques", stats_text)
         else:
             messagebox.showinfo("Statistiques", "Aucune donnée disponible")
 
     def delete_selected_game(self):
-        """Supprime la partie sélectionnée"""
         selection = self.games_tree.selection()
         if not selection:
             messagebox.showwarning(
@@ -703,71 +731,56 @@ class DatabaseViewer(tk.Tk):
             f"Voulez-vous vraiment supprimer la partie '{game_name}' (ID: {game_id}) ?\n\n"
             "Cette action est irréversible.",
         )
-
         if confirm:
             try:
                 query = "DELETE FROM saved_games WHERE id = %s"
                 result = self.execute_query(query, (game_id,), fetch=False)
-
                 if result:
                     messagebox.showinfo("Succès", "Partie supprimée avec succès")
                     self.load_games_list()
-                    # Réinitialiser l'affichage
                     self.current_game_id = None
                     self.moves = []
                     self.view_index = 0
+                    self.game_meta = {}
                     self.canvas.delete("all")
                     self.info_text.delete(1.0, tk.END)
                     self.pos_info_text.delete(1.0, tk.END)
                     self.update_navigation()
                 else:
                     messagebox.showerror("Erreur", "Échec de la suppression")
-
             except Exception as e:
                 messagebox.showerror(
                     "Erreur", f"Erreur lors de la suppression: {str(e)}"
                 )
 
-    # =======================
-    # UTILITAIRES
-    # =======================
-
     def calculate_board_hash(self, board):
-        """Calcule le hash SHA-256 d'une position"""
         if not board:
             return "N/A"
         board_str = json.dumps(board)
         return hashlib.sha256(board_str.encode()).hexdigest()
 
     def get_mode_name(self, mode_code):
-        """Convertit le code mode en nom lisible"""
         modes = {0: "IA vs IA", 1: "Humain vs IA", 2: "Humain vs Humain"}
         return modes.get(mode_code, f"Mode {mode_code}")
 
     def refresh_all(self):
-        """Rafraîchit toutes les données"""
         self.load_games_list()
         if self.current_game_id:
             self.load_game_details(self.current_game_id)
 
     def __del__(self):
-        """Ferme la connexion à la base"""
         if self.conn:
             self.conn.close()
 
 
-# =======================
-# PROGRAMME PRINCIPAL
-# =======================
-
 if __name__ == "__main__":
-    # Vérifier les dépendances
     try:
-        import psycopg2
+        import psycopg2  # noqa
     except ImportError:
-        print("❌ psycopg2 n'est pas installé. Installez-le avec:")
-        print("   pip install psycopg2-binary")
-        exit(1)
+        print(
+            "❌ psycopg2 n'est pas installé. Installez-le avec: pip install psycopg2-binary"
+        )
+        raise SystemExit(1)
 
     app = DatabaseViewer()
     app.mainloop()

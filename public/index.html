@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Puissance 4+ — Web</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <div class="topbar__left">
+        <div class="group">
+          <label for="mode">Mode joueurs</label>
+          <select id="mode">
+            <option value="0">0 — IA vs IA</option>
+            <option value="1" selected>1 — Humain vs IA</option>
+            <option value="2">2 — Humain vs Humain</option>
+          </select>
+        </div>
+
+        <div class="group">
+          <label for="aiMode">IA</label>
+          <select id="aiMode">
+            <option value="random" selected>random</option>
+            <option value="minimax">minimax</option>
+          </select>
+        </div>
+
+        <div class="group">
+          <label for="depth">Profondeur</label>
+          <input id="depth" type="number" min="1" max="8" value="4" />
+        </div>
+
+        <div class="group">
+          <label>Colonnes</label>
+          <label class="toggle" title="Cache le texte des boutons colonnes">
+            <input id="noDigits" type="checkbox" checked />
+            <span>Boutons sans chiffres</span>
+          </label>
+        </div>
+
+        <div class="group">
+          <label for="saveName">Nom de sauvegarde</label>
+          <input id="saveName" type="text" placeholder="ex: partie_du_jour" />
+        </div>
+      </div>
+
+      <div class="topbar__right">
+        <div class="group">
+          <label>Joueur Rouge</label>
+          <div class="inline">
+            <span id="nameR" class="pill pill--red">—</span>
+            <button id="changeR" type="button">Changer</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <label>Joueur Jaune</label>
+          <div class="inline">
+            <span id="nameY" class="pill pill--yellow">—</span>
+            <button id="changeY" type="button">Changer</button>
+          </div>
+        </div>
+
+        <!-- ✅ ONLINE -->
+        <div class="group">
+          <label>Online</label>
+
+          <div class="inline" style="gap:8px; flex-wrap: wrap;">
+            <input id="onlineName" type="text" placeholder="Ton pseudo" style="min-width:140px" />
+            <button id="onlineCreate" type="button" class="btnPrimary">Créer</button>
+          </div>
+
+          <div class="inline" style="gap:8px; flex-wrap: wrap; margin-top:6px;">
+            <input id="onlineCode" type="text" placeholder="Code" style="width:90px; text-transform:uppercase" />
+            <button id="onlineJoin" type="button">Rejoindre</button>
+            <button id="onlineLeave" type="button" class="btnGhost">Quitter</button>
+          </div>
+
+          <div class="inline" style="gap:8px; flex-wrap: wrap; margin-top:6px;">
+            <span id="onlineBadge" class="pill">Offline</span>
+            <button id="onlineCopyLink" type="button">Copier lien</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <label>Actions</label>
+          <div class="inline">
+            <button id="newGame" type="button" class="btnPrimary">Nouvelle partie</button>
+            <button id="stop" type="button">Stop</button>
+          </div>
+        </div>
+
+        <div class="group">
+          <label>Sauver</label>
+          <select id="saveMenu">
+            <option value="" selected>— choisir —</option>
+            <option value="json">JSON (fichier)</option>
+            <option value="db">BD (backend)</option>
+          </select>
+        </div>
+
+        <div class="group">
+          <label>Charger</label>
+          <select id="loadMenu">
+            <option value="" selected>— choisir —</option>
+            <option value="json">JSON (fichier)</option>
+            <option value="db">BD (backend)</option>
+          </select>
+          <input id="loadJson" type="file" accept=".json,application/json" hidden />
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="boardPanel">
+        <div class="statusRow">
+          <div id="status" class="status">—</div>
+          <div class="statusHint">
+            <div class="muted small">Colonne curseur : <b id="colHoverInfo">—</b></div>
+            <div class="muted small">Clique sur le plateau pour jouer dans la colonne</div>
+          </div>
+        </div>
+
+        <div id="colLabels" class="colLabels" aria-hidden="true"></div>
+        <div id="colButtons" class="colButtons" aria-label="Boutons colonnes"></div>
+        <div id="colScores" class="colScores"></div>
+
+        <!-- ✅ wrapper pour resize responsive -->
+        <div class="canvasWrap" id="canvasWrap">
+          <canvas id="board"></canvas>
+        </div>
+
+        <div class="replayBar">
+          <button id="firstMove" type="button">⏮</button>
+          <button id="prevMove" type="button">◀</button>
+          <div id="moveLabel">Coup 0/0</div>
+          <button id="nextMove" type="button">▶</button>
+          <button id="lastMove" type="button">⏭</button>
+          <input id="moveSlider" type="range" min="0" max="0" value="0" />
+        </div>
+      </section>
+
+      <aside class="sidePanel">
+        <div class="card">
+          <h3>Infos</h3>
+          <div class="kv">
+            <div>Rows</div><div id="rowsVal">—</div>
+            <div>Cols</div><div id="colsVal">—</div>
+            <div>Starting</div><div id="startVal">—</div>
+            <div>Game #</div><div id="gameIndexVal">—</div>
+            <div>Moves</div><div id="movesVal">—</div>
+            <div>View</div><div id="viewVal">—</div>
+          </div>
+
+          <p class="hint">
+            En <b>minimax</b>, les scores s’affichent sous les colonnes.<br />
+            Nouvelle partie efface l’historique local.
+          </p>
+        </div>
+
+        <div class="card">
+          <div class="cardHead">
+            <h3>Historique (local)</h3>
+            <button id="clearHistory" type="button" class="btnGhost">Vider</button>
+          </div>
+
+          <div class="tableWrap">
+            <table class="hist">
+              <thead>
+                <tr>
+                  <th>Joueur</th>
+                  <th>Type</th>
+                  <th>Partie</th>
+                  <th>Coup</th>
+                  <th>Col</th>
+                  <th>Quand</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </aside>
+    </main>
+
+    <script src="./game.js"></script>
+  </body>
+</html>
