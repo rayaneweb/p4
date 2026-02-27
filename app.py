@@ -1,3 +1,4 @@
+# app.py
 import os
 import json
 import secrets
@@ -13,17 +14,25 @@ from pydantic import BaseModel, Field
 # =========================
 # Config
 # =========================
-DATABASE_URL = os.environ.get("DATABASE_URL")  # Render Postgres -> env var
 PORT = int(os.environ.get("PORT", "8000"))
 
 
 def db_conn():
-    if not DATABASE_URL:
+    """
+    Render: mets DATABASE_URL dans Environment.
+    On force sslmode=require (Render Postgres).
+    On normalise postgres:// -> postgresql:// (compat psycopg2).
+    """
+    url = os.environ.get("DATABASE_URL")
+    if not url:
         raise RuntimeError(
-            "DATABASE_URL manquant (crée une DB Render Postgres et mets l'URL en env)."
+            "DATABASE_URL manquant (Render > Web Service > Environment)."
         )
-    # Render Postgres exige souvent SSL depuis l'extérieur -> sslmode=require :contentReference[oaicite:1]{index=1}
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql://", 1)
+
+    return psycopg2.connect(url, sslmode="require")
 
 
 def now_utc_iso():
@@ -31,9 +40,10 @@ def now_utc_iso():
 
 
 # =========================
-# DB init
+# DB init (safe migrations)
 # =========================
 INIT_SQL = """
+-- 1) Online tables (créées si absentes)
 CREATE TABLE IF NOT EXISTS online_games (
   id SERIAL PRIMARY KEY,
   code TEXT UNIQUE NOT NULL,
@@ -51,7 +61,7 @@ CREATE TABLE IF NOT EXISTS online_players (
   game_id INT NOT NULL REFERENCES online_games(id) ON DELETE CASCADE,
   player_name TEXT NOT NULL,
   token CHAR(1) NOT NULL,  -- R/Y/S (spectateur)
-  secret TEXT NOT NULL,    -- "player_id" côté client
+  secret TEXT NOT NULL,    -- "player_secret" côté client
   joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(game_id, token) DEFERRABLE INITIALLY IMMEDIATE
 );
@@ -66,7 +76,7 @@ CREATE TABLE IF NOT EXISTS online_moves (
   UNIQUE(game_id, move_index)
 );
 
--- (Optionnel) sauvegardes “missions” (save/load) : table simple compatible avec ton game.js actuel
+-- 2) saved_games (compat game.js) : crée si absent
 CREATE TABLE IF NOT EXISTS saved_games (
   game_id SERIAL PRIMARY KEY,
   user_id INT,
@@ -87,6 +97,20 @@ CREATE TABLE IF NOT EXISTS saved_games (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 3) Migrations douces si saved_games existe déjà avec un schéma différent
+ALTER TABLE saved_games
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE saved_games
+  ADD COLUMN IF NOT EXISTS moves JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE saved_games
+  ADD COLUMN IF NOT EXISTS player_red TEXT;
+
+ALTER TABLE saved_games
+  ADD COLUMN IF NOT EXISTS player_yellow TEXT;
+
+-- 4) Index: seulement si la colonne existe (elle existe après l'ALTER ci-dessus)
 CREATE INDEX IF NOT EXISTS idx_saved_games_created_at ON saved_games(created_at DESC);
 """
 
@@ -116,7 +140,7 @@ def apply_move(board, col, token):
     cols = len(board[0])
     if col < 0 or col >= cols:
         raise ValueError("col out of range")
-    # drop from bottom
+
     for r in range(rows - 1, -1, -1):
         if board[r][col] == EMPTY:
             board[r][col] = token
@@ -146,7 +170,7 @@ def check_winner(board):
                         break
                 if ok:
                     return t
-    # draw?
+
     if all(board[0][c] != EMPTY for c in range(cols)):
         return "D"
     return None
@@ -172,7 +196,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Servir le frontend (place index.html, game.js, style.css dans ./public)
+# Servir le frontend (index.html, game.js, style.css dans ./public)
 if os.path.isdir("public"):
     app.mount("/", StaticFiles(directory="public", html=True), name="public")
 
@@ -218,6 +242,7 @@ def gen_code():
 def online_create(req: CreateOnlineReq):
     code = gen_code()
     secret = secrets.token_urlsafe(24)
+
     rows = max(4, min(20, int(req.rows)))
     cols = max(4, min(20, int(req.cols)))
     starting = req.starting_color if req.starting_color in ("R", "Y") else "R"
@@ -234,7 +259,6 @@ def online_create(req: CreateOnlineReq):
             )
             game = cur.fetchone()
 
-            # creator is always token = starting_color (R by default)
             cur.execute(
                 """
                 INSERT INTO online_players(game_id, player_name, token, secret)
@@ -270,7 +294,6 @@ def online_join(req: JoinOnlineReq):
             if not game:
                 raise HTTPException(404, "Code de partie introuvable.")
 
-            # Determine free token:
             cur.execute(
                 "SELECT token FROM online_players WHERE game_id=%s", (game["id"],)
             )
@@ -281,7 +304,7 @@ def online_join(req: JoinOnlineReq):
             elif "Y" not in tokens:
                 token = "Y"
             else:
-                token = "S"  # spectator
+                token = "S"  # spectateur
 
             cur.execute(
                 """
@@ -293,7 +316,6 @@ def online_join(req: JoinOnlineReq):
             )
             pl = cur.fetchone()
 
-            # if we now have both players, set status playing
             if token in ("R", "Y"):
                 cur.execute(
                     "SELECT COUNT(*) AS c FROM online_players WHERE game_id=%s AND token IN ('R','Y')",
@@ -397,16 +419,15 @@ def online_move(code: str, req: MoveReq):
             if token != game["current_turn"]:
                 raise HTTPException(409, "Pas ton tour.")
 
-            # get moves
             cur.execute(
                 "SELECT move_index, token, col FROM online_moves WHERE game_id=%s ORDER BY move_index ASC",
                 (game["id"],),
             )
             moves = cur.fetchall()
+
             rows = int(game["rows"])
             cols = int(game["cols"])
 
-            # rebuild + apply
             board = rebuild_board(rows, cols, moves)
             try:
                 apply_move(board, int(req.col), token)
@@ -504,6 +525,7 @@ def save_game(req: SaveReq):
 def list_games():
     with db_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # created_at existe après migration
             cur.execute(
                 """
                 SELECT game_id, save_name, rows_count, cols_count, game_mode, ai_mode, ai_depth,
