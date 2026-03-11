@@ -4,12 +4,12 @@ class Connect4Web {
   YELLOW = "Y";
   CONNECT_N = 4;
 
-  COLOR_BG = "#003a78";
-  COLOR_HOLE = "#e3f2fd";
-  COLOR_RED = "#d32f2f";
-  COLOR_YELLOW = "#fbc02d";
-  COLOR_WIN = "#00c853";
-  COLOR_HOVER_COL = "rgba(255,255,255,0.10)";
+  COLOR_BG = "#170c38";
+  COLOR_HOLE = "#ede5ff";
+  COLOR_RED = "#e53030";
+  COLOR_YELLOW = "#f59e0b";
+  COLOR_WIN = "#22c55e";
+  COLOR_HOVER_COL = "rgba(124,82,232,0.18)";
 
   LS_NAME_R = "c4_name_red";
   LS_NAME_Y = "c4_name_yellow";
@@ -987,13 +987,25 @@ class Connect4Web {
           0,
           Math.PI * 2
         );
-        ctx.fillStyle = this.cellColor(this.board[r][c]);
+        const _cv = this.board[r][c];
+        if (_cv === this.RED) {
+          ctx.shadowColor = "rgba(229,48,48,0.65)";
+          ctx.shadowBlur = 14;
+        } else if (_cv === this.YELLOW) {
+          ctx.shadowColor = "rgba(245,158,11,0.55)";
+          ctx.shadowBlur = 12;
+        }
+        ctx.fillStyle = this.cellColor(_cv);
         ctx.fill();
+        ctx.shadowBlur = 0;
 
         if (winSet.has(`${r},${c}`)) {
           ctx.lineWidth = 4;
           ctx.strokeStyle = this.COLOR_WIN;
+          ctx.shadowColor = this.COLOR_WIN;
+          ctx.shadowBlur = 18;
           ctx.stroke();
+          ctx.shadowBlur = 0;
         }
       }
     }
