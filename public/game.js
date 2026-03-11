@@ -188,6 +188,9 @@ class Connect4Web {
 
   // ===== API (backend optionnel)
   apiBase() {
+    // Priorité 1 : variable injectée dans le HTML (window.C4_API_URL)
+    if (window.C4_API_URL) return window.C4_API_URL.replace(/\/$/, "") + "/api";
+    // Priorité 2 : même origine (frontend servi par FastAPI → /api)
     return "/api";
   }
 
